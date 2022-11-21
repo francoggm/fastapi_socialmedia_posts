@@ -3,8 +3,15 @@ from fastapi.params import Body
 from pydantic import BaseModel
 from typing import Optional
 from random import randrange
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from time import sleep
+import os
+from dotenv import load_dotenv
 
 app = FastAPI()
+tries = 0
+load_dotenv()
 
 class Post(BaseModel):
     title: str
@@ -18,12 +25,19 @@ class UpdatePost(BaseModel):
     published: Optional[bool] = True
     rating: Optional[int] = None
 
-my_posts = [{"title": "post 1", "content": "content post 1", "id": 1}, {"title": "post 2", "content": "content post 2", "id": 2}]
-
-def find_post(id):
-    for post in my_posts:
-        if post.get('id') == id:
-            return post
+while tries < 3:
+    try:
+        conn = psycopg2.connect(host=os.getenv('HOST'), database=os.getenv('DATABASE'), user=os.getenv('USER'), 
+        password=os.getenv('PASSWORD'), cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+        print('DB Connected')
+        break
+    except Exception as e:
+        print('Error connecting DB ->', e, '\nTrying again!')
+        sleep(2)
+        tries += 1
+        if tries == 3:
+            print('Exceded tries, error connecting DB')
 
 @app.get('/')
 def root():
@@ -31,51 +45,54 @@ def root():
 
 @app.get('/posts')
 def get_posts():
-    return {"posts": my_posts}
-
-@app.post('/posts', status_code=status.HTTP_201_CREATED)
-def create_post(post: Post):
-    post_dict = post.dict()
-    post_dict['id'] = randrange(0, 1_000_000)
-    my_posts.append(post_dict)
-    return {"post": post_dict}
-
-@app.get('/posts/latest')
-def get_latest_post():
-    post = my_posts[-1]
-    return {"post": post}
+    cursor.execute("""SELECT * FROM posts """)
+    posts = cursor.fetchall()
+    return {"posts": posts}
 
 @app.get('/posts/{id}')
-def get_post(id: int, response: Response):
-    post = find_post(id)
+def get_post(id: int):
+    cursor.execute("""SELECT * FROM posts WHERE id = %s """, (str(id),))
+    post = cursor.fetchone()
     if post:
         return {"post": post}
     raise HTTPException(status.HTTP_404_NOT_FOUND, f"Post {id} not found!")
 
+@app.post('/posts', status_code=status.HTTP_201_CREATED)
+def create_post(post: Post):
+    cursor.execute("""INSERT INTO posts (title, content, published) VALUES (%s, %s, %s) RETURNING *""", (post.title, post.content, post.published))
+    new_post = cursor.fetchone()
+    conn.commit()
+    return {"post": new_post}
+
 @app.delete('/posts/{id}', status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(id: int):
-    post = find_post(id)
+    cursor.execute("""SELECT * FROM posts WHERE id = %s """, (str(id),))
+    post = cursor.fetchone()
     if post:
-        my_posts.remove(post)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        cursor.execute("""DELETE FROM posts WHERE id = %s RETURNING *""", (str(id),))
+        deleted = cursor.fetchone()
+        if deleted:
+            conn.commit()
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Post {id} not found!")
 
 @app.put('/posts/{id}')
 def update_post(id: int, update_post: UpdatePost):
-    post = find_post(id)
-    update_post = update_post.dict()
+    cursor.execute("""SELECT * FROM posts WHERE id = %s """, (str(id),))
+    post = cursor.fetchone()
     if post:
-        my_posts.remove(post)
-        if update_post.get('title'):
-            post['title'] = update_post['title']
-        if update_post.get('content'):
-            post['content'] = update_post['content']
-        if update_post.get('published'):
-            post['published'] = update_post['published']
-        if update_post.get('rating'):
-            post['rating'] = update_post['rating']
-        my_posts.append(post)
-        return {"post": post}
+        cursor.execute("""UPDATE posts SET title = %s, content = %s, published = %s WHERE id = %s RETURNING *""", (update_post.title, update_post.content, update_post.published, str(id)))
+        updated_post = cursor.fetchone()
+        if updated_post:
+            conn.commit()
+            return {"post": updated_post}
     raise HTTPException(status.HTTP_404_NOT_FOUND, "Post not found!")
+
+@app.get('/posts/latest/')
+def get_latest_post():
+    cursor.execute("""SELECT * FROM posts ORDER BY created_at DESC LIMIT 1 """)
+    post = cursor.fetchone()
+    if post:
+        return {"post": post}
     
 

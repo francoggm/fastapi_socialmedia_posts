@@ -1,0 +1,9 @@
+GET ONE = cursor.execute("""SELECT * FROM posts WHERE id = %s """, (str(id),))
+
+GET ALL = cursor.execute("""SELECT * FROM posts """)
+
+INSERT = cursor.execute("""INSERT INTO posts (title, content, published) VALUES (%s, %s, %s) RETURNING *""", (post.title, post.content, post.published))
+
+UPDATE = cursor.execute("""UPDATE posts SET title = %s, content = %s, published = %s WHERE id = %s RETURNING *""", (update_post.title, update_post.content, update_post.published, str(id)))
+
+DELETE = cursor.execute("""SELECT * FROM posts WHERE id = %s """, (str(id),))
