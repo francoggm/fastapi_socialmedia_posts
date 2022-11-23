@@ -1,17 +1,18 @@
-from fastapi import FastAPI, Response, status, HTTPException
-from fastapi.params import Body
+from fastapi import FastAPI, Response, status, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
-from random import randrange
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from time import sleep
-import os
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
-app = FastAPI()
-tries = 0
+import psycopg2
+import os
+
+from . import models
+from .database import engine, get_db
+
 load_dotenv()
+models.Base.metadata.create_all(bind=engine)
+app = FastAPI()
 
 class Post(BaseModel):
     title: str
@@ -25,43 +26,53 @@ class UpdatePost(BaseModel):
     published: Optional[bool] = True
     rating: Optional[int] = None
 
-while tries < 3:
-    try:
-        conn = psycopg2.connect(host=os.getenv('HOST'), database=os.getenv('DATABASE'), user=os.getenv('USER'), 
-        password=os.getenv('PASSWORD'), cursor_factory=RealDictCursor)
-        cursor = conn.cursor()
-        print('DB Connected')
-        break
-    except Exception as e:
-        print('Error connecting DB ->', e, '\nTrying again!')
-        sleep(2)
-        tries += 1
-        if tries == 3:
-            print('Exceded tries, error connecting DB')
+# tries = 0
+# while tries < 3:
+#     try:
+#         conn = psycopg2.connect(host=os.getenv('HOST'), database=os.getenv('DATABASE'), user=os.getenv('USER'), 
+#         password=os.getenv('PASSWORD'), cursor_factory=RealDictCursor)
+#         cursor = conn.cursor()
+#         print('DB Connected')
+#         break
+#     except Exception as e:
+#         print('Error connecting DB ->', e, '\nTrying again!')
+#         sleep(2)
+#         tries += 1
+#         if tries == 3:
+#             print('Exceded tries, error connecting DB')
 
 @app.get('/')
 def root():
     return {"message": "welcome to api"}
 
 @app.get('/posts')
-def get_posts():
-    cursor.execute("""SELECT * FROM posts """)
-    posts = cursor.fetchall()
+def get_posts(db: Session = Depends(get_db)):
+    # cursor.execute("""SELECT * FROM posts """)
+    # posts = cursor.fetchall()
+
+    posts = db.query(models.Post).all()
     return {"posts": posts}
 
 @app.get('/posts/{id}')
-def get_post(id: int):
-    cursor.execute("""SELECT * FROM posts WHERE id = %s """, (str(id),))
-    post = cursor.fetchone()
+def get_post(id: int, db: Session = Depends(get_db)):
+    # cursor.execute("""SELECT * FROM posts WHERE id = %s """, (str(id),))
+    # post = cursor.fetchone()
+
+    post = db.query(models.Post).filter_by(id = id).first()
     if post:
         return {"post": post}
     raise HTTPException(status.HTTP_404_NOT_FOUND, f"Post {id} not found!")
 
 @app.post('/posts', status_code=status.HTTP_201_CREATED)
-def create_post(post: Post):
-    cursor.execute("""INSERT INTO posts (title, content, published) VALUES (%s, %s, %s) RETURNING *""", (post.title, post.content, post.published))
-    new_post = cursor.fetchone()
-    conn.commit()
+def create_post(post: Post, db: Session = Depends(get_db)):
+    # cursor.execute("""INSERT INTO posts (title, content, published) VALUES (%s, %s, %s) RETURNING *""", (post.title, post.content, post.published))
+    # new_post = cursor.fetchone()
+    # conn.commit()
+
+    new_post = models.Post(title = post.title, content = post.content, published = post.published)
+    db.add(new_post)
+    db.commit()
+    db.refresh(new_post)
     return {"post": new_post}
 
 @app.delete('/posts/{id}', status_code=status.HTTP_204_NO_CONTENT)
